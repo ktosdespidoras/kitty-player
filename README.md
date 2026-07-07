@@ -89,7 +89,7 @@ title.lrc
 title.txt
 ```
 
-Names are lowercase and spaces become `-`. Example:
+Names keep Unicode letters, unsafe filename characters are replaced, and spaces become `-`. Example:
 
 ```text
 ~/.cache/kitty-player/lyrics/example-artist-example-song.lrc

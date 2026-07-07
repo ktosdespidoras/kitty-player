@@ -116,10 +116,15 @@ trim_text() {
 
 slugify() {
   printf "%s" "$1" \
-    | tr '[:upper:]' '[:lower:]' \
-    | tr -cd '[:alnum:] ._-' \
-    | tr ' ' '-' \
-    | tr -s '-'
+    | sed -E 's/[\/:*?"<>|#]+/-/g; s/[[:space:]]+/-/g; s/-+/-/g; s/^-//; s/-$//'
+}
+
+legacy_slugify() {
+  printf "%s" "$1" \
+    | tr "[:upper:]" "[:lower:]" \
+    | tr -cd "[:alnum:] ._-" \
+    | tr " " "-" \
+    | tr -s "-"
 }
 
 current_lyrics_dir() {
@@ -282,30 +287,37 @@ fetch_lrclib_lyrics() {
         | gsub("\\([^)]*\\)|\\[[^]]*\\]"; " ")
         | gsub("\\b(feat|ft|with|prod)\\.?\\b.*$"; " ")
         | gsub("\\b(remaster(ed)?|live|explicit|clean|radio edit|single version|album version|official video)\\b"; " ")
-        | gsub("[^a-z0-9]+"; " ")
+        | gsub("[^[:alnum:]]+"; " ")
         | gsub("^ +| +$"; "");
       def compact: norm | gsub(" "; "");
+      def rawcompact: gsub("\\([^)]*\\)|\\[[^]]*\\]"; " ") | gsub("[^[:alnum:]]+"; "");
       def diff(a; b): if a > b then a - b else b - a end;
       ($artist | norm) as $artist_norm |
       ($artist | compact) as $artist_compact |
+      ($artist | rawcompact) as $artist_rawcompact |
       ($title | norm) as $title_norm |
       ($title | compact) as $title_compact |
+      ($title | rawcompact) as $title_rawcompact |
       map(select((.syncedLyrics // .plainLyrics // "") != ""))
       | map(. + {
           matchScore:
             (
               ((.trackName // "") | norm) as $candidate_title |
               ((.trackName // "") | compact) as $candidate_title_compact |
+              ((.trackName // "") | rawcompact) as $candidate_title_rawcompact |
               ((.artistName // "") | norm) as $candidate_artist |
               ((.artistName // "") | compact) as $candidate_artist_compact |
+              ((.artistName // "") | rawcompact) as $candidate_artist_rawcompact |
               (if $candidate_title == $title_norm then 60
                elif ($candidate_title | contains($title_norm)) or ($title_norm | contains($candidate_title)) then 45
                elif ($candidate_title_compact | contains($title_compact)) or ($title_compact | contains($candidate_title_compact)) then 35
+               elif ($candidate_title_rawcompact | contains($title_rawcompact)) or ($title_rawcompact | contains($candidate_title_rawcompact)) then 35
                else 0 end)
               +
               (if $candidate_artist == $artist_norm then 30
                elif ($candidate_artist | contains($artist_norm)) or ($artist_norm | contains($candidate_artist)) then 20
                elif ($candidate_artist_compact | contains($artist_compact)) or ($artist_compact | contains($candidate_artist_compact)) then 15
+               elif ($candidate_artist_rawcompact | contains($artist_rawcompact)) or ($artist_rawcompact | contains($candidate_artist_rawcompact)) then 15
                else 0 end)
               +
               (if $duration > 0 and (.duration != null) then
@@ -346,11 +358,13 @@ fetch_lrclib_lyrics() {
 }
 
 refetch_lyrics() {
-  local dir base
+  local dir base legacy_base
 
   dir="$(current_lyrics_dir)"
   base="$(current_lyrics_base)"
+  legacy_base="$(legacy_slugify "$artist")-$(legacy_slugify "$title")"
   rm -f "$dir/$base.lrc" "$dir/$base.txt" 2>/dev/null || true
+  rm -f "$dir/$legacy_base.lrc" "$dir/$legacy_base.txt" 2>/dev/null || true
   lyrics_key=""
   lyrics_path=""
   lyrics_found=0
