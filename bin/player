@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -u
+
+ESC=$'\033'
+ALT_ON="${ESC}[?1049h"
+ALT_OFF="${ESC}[?1049l"
+CURSOR_OFF="${ESC}[?25l"
+CURSOR_ON="${ESC}[?25h"
+CLEAR="${ESC}[2J"
+HOME="${ESC}[H"
+
+frames=(
+  "  .-''''-.
+ /  .--.  \\
+|  ( () )  |
+ \\  '--'  /
+  '-....-' "
+  "  .-''''-.
+ /  .--.  \\
+|  ( )( )  |
+ \\  '--'  /
+  '-....-' "
+  "  .-''''-.
+ /  .--.  \\
+|  ( )()   |
+ \\  '--'  /
+  '-....-' "
+  "  .-''''-.
+ /  .--.  \\
+|   ()()   |
+ \\  '--'  /
+  '-....-' "
+)
+
+palette=(
+  "38;2;255;94;148"
+  "38;2;99;213;255"
+  "38;2;126;255;178"
+  "38;2;255;207;94"
+  "38;2;191;134;255"
+)
+
+tracks=(
+  "midnight tty - soft boot"
+  "kitty room - phosphor dreams"
+  "localhost love - loop forever"
+  "shell club - no gui needed"
+)
+
+cleanup() {
+  printf "%b%b%b" "$CURSOR_ON" "$ALT_OFF" "${ESC}[0m"
+}
+
+trap cleanup EXIT INT TERM
+
+term_size() {
+  cols=$(tput cols 2>/dev/null || printf 80)
+  rows=$(tput lines 2>/dev/null || printf 24)
+}
+
+bar_line() {
+  local tick="$1"
+  local width="$2"
+  local out=""
+  local blocks=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█" "▇" "▆" "▅" "▄")
+  local i n
+
+  for ((i = 0; i < width; i++)); do
+    n=$(( (i * 7 + tick * 3 + (i % 5) * tick) % ${#blocks[@]} ))
+    out+="${blocks[$n]}"
+  done
+
+  printf "%s" "$out"
+}
+
+center() {
+  local text="$1"
+  local width="$2"
+  local len=${#text}
+  local pad=$(( (width - len) / 2 ))
+
+  (( pad < 0 )) && pad=0
+  printf "%*s%s\n" "$pad" "" "$text"
+}
+
+draw() {
+  local tick="$1"
+  local frame_index=$(( tick % ${#frames[@]} ))
+  local color="${palette[$(( tick % ${#palette[@]} ))]}"
+  local track="${tracks[$(( (tick / 32) % ${#tracks[@]} ))]}"
+  local progress=$(( tick % 120 ))
+  local seconds=$(( tick / 4 ))
+  local width=$(( cols > 72 ? 44 : cols - 10 ))
+  local filled=$(( progress * width / 120 ))
+  local empty=$(( width - filled ))
+  local spectrum_width=$(( cols > 86 ? 56 : cols - 8 ))
+
+  (( width < 20 )) && width=20
+  (( spectrum_width < 20 )) && spectrum_width=20
+
+  printf "%b%b" "$HOME" "$CLEAR"
+  printf "%b" "${ESC}[${color}m"
+  center "K I T T Y   P L A Y E R" "$cols"
+  printf "%b" "${ESC}[0m"
+  center "fake vinyl deck for a real terminal" "$cols"
+  printf "\n"
+
+  while IFS= read -r line; do
+    printf "%b" "${ESC}[${color}m"
+    center "$line" "$cols"
+    printf "%b" "${ESC}[0m"
+  done <<< "${frames[$frame_index]}"
+
+  printf "\n"
+  center "now playing: $track" "$cols"
+  center "$(printf "%02d:%02d" $((seconds / 60)) $((seconds % 60))) / 03:00" "$cols"
+  printf "\n"
+
+  printf "%*s" $(( (cols - width - 2) / 2 )) ""
+  printf "%b[" "${ESC}[38;2;90;90;100m"
+  printf "%b%*s" "${ESC}[38;2;126;255;178m" "$filled" "" | tr ' ' '━'
+  printf "%b%*s" "${ESC}[38;2;55;55;65m" "$empty" "" | tr ' ' '─'
+  printf "%b]\n" "${ESC}[0m"
+
+  printf "\n"
+  printf "%*s" $(( (cols - spectrum_width) / 2 )) ""
+  printf "%b%s%b\n" "${ESC}[38;2;99;213;255m" "$(bar_line "$tick" "$spectrum_width")" "${ESC}[0m"
+  printf "\n"
+  center "q / ctrl+c - quit" "$cols"
+}
+
+printf "%b%b" "$ALT_ON" "$CURSOR_OFF"
+stty -echo -icanon time 0 min 0 2>/dev/null || true
+
+tick=0
+while true; do
+  term_size
+  draw "$tick"
+
+  read -r -s -n 1 key 2>/dev/null || key=""
+  [[ "$key" == "q" || "$key" == "Q" ]] && break
+
+  tick=$((tick + 1))
+  sleep 0.08
+done

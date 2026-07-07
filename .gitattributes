@@ -1,0 +1,4 @@
+*.sh text eol=lf
+bin/player text eol=lf
+README.md text eol=lf
+.gitignore text eol=lf
