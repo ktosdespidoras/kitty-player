@@ -289,10 +289,80 @@ fetch_lrclib_lyrics() {
       2>/dev/null || true
   )"
 
-  [[ -n "$response" ]] || { lyrics_status="lyrics not found online"; return; }
+  if [[ -n "$response" ]]; then
+    best="$(
+      printf "%s" "$response" | jq -c \
+        --arg artist "$artist" \
+        --arg title "$title" \
+        --argjson duration "$duration_s" '
+        def norm:
+          ascii_downcase
+          | gsub("\\([^)]*\\)|\\[[^]]*\\]"; " ")
+          | gsub("\\b(feat|ft|with|prod)\\.?\\b.*$"; " ")
+          | gsub("\\b(remaster(ed)?|live|explicit|clean|radio edit|single version|album version|official video)\\b"; " ")
+          | gsub("[^[:alnum:]]+"; " ")
+          | gsub("^ +| +$"; "");
+        def compact: norm | gsub(" "; "");
+        def rawcompact: gsub("\\([^)]*\\)|\\[[^]]*\\]"; " ") | gsub("[^[:alnum:]]+"; "");
+        def diff(a; b): if a > b then a - b else b - a end;
+        ($artist | norm) as $artist_norm |
+        ($artist | compact) as $artist_compact |
+        ($artist | rawcompact) as $artist_rawcompact |
+        ($title | norm) as $title_norm |
+        ($title | compact) as $title_compact |
+        ($title | rawcompact) as $title_rawcompact |
+        map(select((.syncedLyrics // .plainLyrics // "") != ""))
+        | map(. + {
+            matchScore:
+              (
+                ((.trackName // "") | norm) as $candidate_title |
+                ((.trackName // "") | compact) as $candidate_title_compact |
+                ((.trackName // "") | rawcompact) as $candidate_title_rawcompact |
+                ((.artistName // "") | norm) as $candidate_artist |
+                ((.artistName // "") | compact) as $candidate_artist_compact |
+                ((.artistName // "") | rawcompact) as $candidate_artist_rawcompact |
+                (if $candidate_title == $title_norm then 60
+                 elif ($candidate_title | contains($title_norm)) or ($title_norm | contains($candidate_title)) then 45
+                 elif ($candidate_title_compact | contains($title_compact)) or ($title_compact | contains($candidate_title_compact)) then 35
+                 elif ($candidate_title_rawcompact | contains($title_rawcompact)) or ($title_rawcompact | contains($candidate_title_rawcompact)) then 35
+                 else 0 end)
+                +
+                (if $candidate_artist == $artist_norm then 30
+                 elif ($candidate_artist | contains($artist_norm)) or ($artist_norm | contains($candidate_artist)) then 20
+                 elif ($candidate_artist_compact | contains($artist_compact)) or ($artist_compact | contains($candidate_artist_compact)) then 15
+                 elif ($candidate_artist_rawcompact | contains($artist_rawcompact)) or ($artist_rawcompact | contains($candidate_artist_rawcompact)) then 15
+                 else 0 end)
+                +
+                (if $duration > 0 and (.duration != null) then
+                   (diff((.duration | tonumber); $duration) as $d |
+                    if $d <= 2 then 20
+                    elif $d <= 5 then 10
+                    elif $d > 15 then -45
+                    else 0 end)
+                 else 0 end)
+              )
+          })
+        | sort_by(.matchScore)
+        | reverse
+        | .[0] // empty
+        | select(.matchScore >= 75)
+        ' 2>/dev/null || true
+    )"
+  fi
 
-  best="$(
-    printf "%s" "$response" | jq -c \
+  if [[ -z "$best" ]]; then
+    response="$(
+      curl -fsS --get "https://lrclib.net/api/search" \
+        --connect-timeout 1 \
+        --max-time 2 \
+        --data-urlencode "q=$artist $title" \
+        2>/dev/null || true
+    )"
+  fi
+
+  if [[ -n "$response" && -z "$best" ]]; then
+    best="$(
+      printf "%s" "$response" | jq -c \
       --arg artist "$artist" \
       --arg title "$title" \
       --argjson duration "$duration_s" '
@@ -348,7 +418,8 @@ fetch_lrclib_lyrics() {
       | .[0] // empty
       | select(.matchScore >= 75)
       ' 2>/dev/null || true
-  )"
+    )"
+  fi
 
   if [[ -z "$best" ]]; then
     response="$(
