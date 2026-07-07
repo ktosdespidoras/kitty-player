@@ -69,6 +69,7 @@ Keys:
 - `p` previous track
 - `s` stop
 - `r` refresh
+- `L` refetch lyrics for the current track
 - `q` quit
 
 ## Lyrics
@@ -103,7 +104,9 @@ Synced `.lrc` example:
 
 Plain `.txt` files also work, but they scroll without timing.
 
-If no local file exists and `curl`/`jq` are installed, `player` tries to fetch lyrics from LRCLIB and saves them into the same folder.
+If no local file exists and `curl`/`jq` are installed, `player` tries to fetch lyrics from LRCLIB and saves them into the same folder. The match is checked against artist, title, and duration to avoid random lyrics.
+
+If a bad lyric file was cached earlier, press `L` inside `player` to remove the cached file for the current track and fetch it again.
 
 ## Manual install
 

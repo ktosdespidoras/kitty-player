@@ -122,6 +122,14 @@ slugify() {
     | tr -s '-'
 }
 
+current_lyrics_dir() {
+  printf "%s" "${XDG_CACHE_HOME:-$HOME/.cache}/kitty-player/lyrics"
+}
+
+current_lyrics_base() {
+  printf "%s-%s" "$(slugify "$artist")" "$(slugify "$title")"
+}
+
 fmt_time() {
   local total="${1:-0}"
 
@@ -242,31 +250,84 @@ read_lyrics_file() {
 }
 
 fetch_lrclib_lyrics() {
-  local dir artist_slug title_slug duration_s response lyrics synced target
+  local dir artist_slug title_slug duration_s response best lyrics synced target score
 
   command -v curl >/dev/null 2>&1 || { lyrics_status="install curl+jq for auto lyrics"; return; }
   command -v jq >/dev/null 2>&1 || { lyrics_status="install jq for auto lyrics"; return; }
   [[ "$artist" != "Unknown artist" && "$title" != "Unknown title" ]] || return
 
-  dir="${XDG_CACHE_HOME:-$HOME/.cache}/kitty-player/lyrics"
+  dir="$(current_lyrics_dir)"
   mkdir -p "$dir" 2>/dev/null || true
   artist_slug="$(slugify "$artist")"
   title_slug="$(slugify "$title")"
   duration_s=$(( length_us / 1000000 ))
 
   response="$(
-    curl -fsS --get "https://lrclib.net/api/get" \
+    curl -fsS --get "https://lrclib.net/api/search" \
       --data-urlencode "artist_name=$artist" \
       --data-urlencode "track_name=$title" \
       --data-urlencode "album_name=$album" \
-      --data-urlencode "duration=$duration_s" \
       2>/dev/null || true
   )"
 
   [[ -n "$response" ]] || { lyrics_status="lyrics not found online"; return; }
 
-  synced="$(printf "%s" "$response" | jq -r '.syncedLyrics // empty' 2>/dev/null || true)"
-  lyrics="$(printf "%s" "$response" | jq -r '.plainLyrics // empty' 2>/dev/null || true)"
+  best="$(
+    printf "%s" "$response" | jq -c \
+      --arg artist "$artist" \
+      --arg title "$title" \
+      --argjson duration "$duration_s" '
+      def norm:
+        ascii_downcase
+        | gsub("\\([^)]*\\)|\\[[^]]*\\]"; " ")
+        | gsub("\\b(feat|ft|with|prod)\\.?\\b.*$"; " ")
+        | gsub("\\b(remaster(ed)?|live|explicit|clean|radio edit|single version|album version|official video)\\b"; " ")
+        | gsub("[^a-z0-9]+"; " ")
+        | gsub("^ +| +$"; "");
+      def compact: norm | gsub(" "; "");
+      def diff(a; b): if a > b then a - b else b - a end;
+      ($artist | norm) as $artist_norm |
+      ($artist | compact) as $artist_compact |
+      ($title | norm) as $title_norm |
+      ($title | compact) as $title_compact |
+      map(select((.syncedLyrics // .plainLyrics // "") != ""))
+      | map(. + {
+          matchScore:
+            (
+              ((.trackName // "") | norm) as $candidate_title |
+              ((.trackName // "") | compact) as $candidate_title_compact |
+              ((.artistName // "") | norm) as $candidate_artist |
+              ((.artistName // "") | compact) as $candidate_artist_compact |
+              (if $candidate_title == $title_norm then 60
+               elif ($candidate_title | contains($title_norm)) or ($title_norm | contains($candidate_title)) then 45
+               elif ($candidate_title_compact | contains($title_compact)) or ($title_compact | contains($candidate_title_compact)) then 35
+               else 0 end)
+              +
+              (if $candidate_artist == $artist_norm then 30
+               elif ($candidate_artist | contains($artist_norm)) or ($artist_norm | contains($candidate_artist)) then 20
+               elif ($candidate_artist_compact | contains($artist_compact)) or ($artist_compact | contains($candidate_artist_compact)) then 15
+               else 0 end)
+              +
+              (if $duration > 0 and (.duration != null) then
+                 (diff((.duration | tonumber); $duration) as $d |
+                  if $d <= 2 then 20
+                  elif $d <= 5 then 10
+                  elif $d > 15 then -45
+                  else 0 end)
+               else 0 end)
+            )
+        })
+      | sort_by(.matchScore)
+      | reverse
+      | .[0] // empty
+      | select(.matchScore >= 75)
+      ' 2>/dev/null || true
+  )"
+
+  [[ -n "$best" ]] || { lyrics_status="lyrics match too weak"; return; }
+  score="$(printf "%s" "$best" | jq -r '.matchScore // 0' 2>/dev/null || printf 0)"
+  synced="$(printf "%s" "$best" | jq -r '.syncedLyrics // empty' 2>/dev/null || true)"
+  lyrics="$(printf "%s" "$best" | jq -r '.plainLyrics // empty' 2>/dev/null || true)"
 
   if [[ -n "$synced" && "$synced" != "null" ]]; then
     target="$dir/$artist_slug-$title_slug.lrc"
@@ -280,8 +341,21 @@ fetch_lrclib_lyrics() {
   fi
 
   lyrics_path="$target"
-  lyrics_status="downloaded lyrics"
+  lyrics_status="downloaded lyrics score $score"
   read_lyrics_file
+}
+
+refetch_lyrics() {
+  local dir base
+
+  dir="$(current_lyrics_dir)"
+  base="$(current_lyrics_base)"
+  rm -f "$dir/$base.lrc" "$dir/$base.txt" 2>/dev/null || true
+  lyrics_key=""
+  lyrics_path=""
+  lyrics_found=0
+  lyrics_status="refetching lyrics"
+  load_lyrics
 }
 
 load_lyrics() {
@@ -297,7 +371,7 @@ load_lyrics() {
   lyrics_lines=()
   lyrics_times=()
 
-  dir="${XDG_CACHE_HOME:-$HOME/.cache}/kitty-player/lyrics"
+  dir="$(current_lyrics_dir)"
   artist_slug="$(slugify "$artist")"
   title_slug="$(slugify "$title")"
 
@@ -476,7 +550,7 @@ draw() {
   printf "%*s" $(( (cols - spectrum_width) / 2 )) ""
   printf "%b%s%b%b\n" "${ESC}[38;2;99;213;255m" "$(bar_line "$tick" "$spectrum_width")" "${ESC}[0m" "$EOL"
   blank_line
-  center "space play/pause | n next | p prev | s stop | r refresh | q quit" "$cols"
+  center "space play/pause | n next | p prev | s stop | r refresh | L refetch lyrics | q quit" "$cols"
   printf "%b" "${ESC}[J"
 }
 
@@ -515,6 +589,7 @@ handle_key() {
     n|N) run_playerctl next; force_refresh=1 ;;
     p|P) run_playerctl previous; force_refresh=1 ;;
     s|S) run_playerctl stop; force_refresh=1 ;;
+    l|L) refetch_lyrics; force_refresh=1 ;;
     r|R) force_refresh=1 ;;
   esac
 
