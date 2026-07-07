@@ -1,8 +1,21 @@
 # kitty-player
 
-Tiny terminal toy for Linux/kitty. It installs a `player` command that draws a fake animated vinyl deck with truecolor ANSI output.
+Tiny terminal music deck for Linux/kitty. It installs a `player` command that reads your real media session through `playerctl` and draws an animated terminal UI.
 
-No Python, no dependencies, no build step.
+No Python, no build step. Requires `playerctl` on the Linux machine.
+
+## Install playerctl
+
+```bash
+# Arch
+sudo pacman -S playerctl
+
+# Debian/Ubuntu
+sudo apt install playerctl
+
+# Fedora
+sudo dnf install playerctl
+```
 
 ## Install
 
@@ -18,7 +31,14 @@ Then run it from anywhere:
 player
 ```
 
-Quit with `q` or `Ctrl+C`.
+Keys:
+
+- `Space` play/pause
+- `n` next track
+- `p` previous track
+- `s` stop
+- `r` refresh
+- `q` quit
 
 ## Manual install
 

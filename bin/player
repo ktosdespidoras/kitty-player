@@ -40,14 +40,21 @@ palette=(
   "38;2;191;134;255"
 )
 
-tracks=(
-  "midnight tty - soft boot"
-  "kitty room - phosphor dreams"
-  "localhost love - loop forever"
-  "shell club - no gui needed"
-)
+status=""
+artist=""
+title=""
+album=""
+length_us=0
+position_s=0
+player_name=""
+has_playerctl=0
+has_player=0
+old_stty=""
+
+command -v stty >/dev/null 2>&1 && old_stty="$(stty -g 2>/dev/null || true)"
 
 cleanup() {
+  [[ -n "$old_stty" ]] && stty "$old_stty" 2>/dev/null || true
   printf "%b%b%b" "$CURSOR_ON" "$ALT_OFF" "${ESC}[0m"
 }
 
@@ -56,17 +63,86 @@ trap cleanup EXIT INT TERM
 term_size() {
   cols=$(tput cols 2>/dev/null || printf 80)
   rows=$(tput lines 2>/dev/null || printf 24)
+  (( cols < 40 )) && cols=40
+  (( rows < 16 )) && rows=16
+}
+
+trim_text() {
+  local text="$1"
+  local max="$2"
+
+  if (( ${#text} > max )); then
+    printf "%s..." "${text:0:max-3}"
+  else
+    printf "%s" "$text"
+  fi
+}
+
+fmt_time() {
+  local total="${1:-0}"
+
+  total="${total%.*}"
+  [[ "$total" =~ ^[0-9]+$ ]] || total=0
+  printf "%02d:%02d" $((total / 60)) $((total % 60))
+}
+
+run_playerctl() {
+  playerctl "$@" >/dev/null 2>&1 || true
+}
+
+refresh_player() {
+  local meta pos raw_length
+
+  has_playerctl=0
+  has_player=0
+  status=""
+  artist=""
+  title=""
+  album=""
+  length_us=0
+  position_s=0
+  player_name=""
+
+  command -v playerctl >/dev/null 2>&1 || return
+  has_playerctl=1
+
+  status="$(playerctl status 2>/dev/null || true)"
+  [[ -n "$status" ]] || return
+  has_player=1
+
+  player_name="$(playerctl -l 2>/dev/null | head -n 1 || true)"
+  meta="$(playerctl metadata --format '{{artist}}|||{{title}}|||{{album}}|||{{mpris:length}}' 2>/dev/null || true)"
+
+  artist="${meta%%|||*}"
+  meta="${meta#*|||}"
+  title="${meta%%|||*}"
+  meta="${meta#*|||}"
+  album="${meta%%|||*}"
+  raw_length="${meta##*|||}"
+
+  artist="${artist:-Unknown artist}"
+  title="${title:-Unknown title}"
+  album="${album:-}"
+  [[ "$raw_length" =~ ^[0-9]+$ ]] && length_us="$raw_length" || length_us=0
+
+  pos="$(playerctl position 2>/dev/null || true)"
+  pos="${pos%.*}"
+  [[ "$pos" =~ ^[0-9]+$ ]] && position_s="$pos" || position_s=0
 }
 
 bar_line() {
   local tick="$1"
   local width="$2"
   local out=""
-  local blocks=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█" "▇" "▆" "▅" "▄")
+  local blocks=("." ":" "-" "=" "+" "*" "#" "%" "#" "*" "+" "=")
   local i n
 
   for ((i = 0; i < width; i++)); do
-    n=$(( (i * 7 + tick * 3 + (i % 5) * tick) % ${#blocks[@]} ))
+    if [[ "$status" == "Paused" ]]; then
+      n=$(( (i + tick / 4) % 4 ))
+    else
+      n=$(( (i * 7 + tick * 3 + (i % 5) * tick) % ${#blocks[@]} ))
+    fi
     out+="${blocks[$n]}"
   done
 
@@ -87,22 +163,28 @@ draw() {
   local tick="$1"
   local frame_index=$(( tick % ${#frames[@]} ))
   local color="${palette[$(( tick % ${#palette[@]} ))]}"
-  local track="${tracks[$(( (tick / 32) % ${#tracks[@]} ))]}"
-  local progress=$(( tick % 120 ))
-  local seconds=$(( tick / 4 ))
+  local duration_s=$(( length_us / 1000000 ))
   local width=$(( cols > 72 ? 44 : cols - 10 ))
-  local filled=$(( progress * width / 120 ))
+  local filled=0
   local empty=$(( width - filled ))
   local spectrum_width=$(( cols > 86 ? 56 : cols - 8 ))
 
   (( width < 20 )) && width=20
   (( spectrum_width < 20 )) && spectrum_width=20
 
+  if (( duration_s > 0 )); then
+    (( position_s > duration_s )) && position_s="$duration_s"
+    filled=$(( position_s * width / duration_s ))
+  else
+    filled=$(( tick % width ))
+  fi
+  empty=$(( width - filled ))
+
   printf "%b%b" "$HOME" "$CLEAR"
   printf "%b" "${ESC}[${color}m"
   center "K I T T Y   P L A Y E R" "$cols"
   printf "%b" "${ESC}[0m"
-  center "fake vinyl deck for a real terminal" "$cols"
+  center "MPRIS terminal deck" "$cols"
   printf "\n"
 
   while IFS= read -r line; do
@@ -112,21 +194,61 @@ draw() {
   done <<< "${frames[$frame_index]}"
 
   printf "\n"
-  center "now playing: $track" "$cols"
-  center "$(printf "%02d:%02d" $((seconds / 60)) $((seconds % 60))) / 03:00" "$cols"
+  center "$(trim_text "$artist - $title" $((cols - 4)))" "$cols"
+  [[ -n "$album" ]] && center "$(trim_text "$album" $((cols - 4)))" "$cols"
+  center "status: $status${player_name:+ | player: $player_name}" "$cols"
+  center "$(fmt_time "$position_s") / $(fmt_time "$duration_s")" "$cols"
   printf "\n"
 
   printf "%*s" $(( (cols - width - 2) / 2 )) ""
   printf "%b[" "${ESC}[38;2;90;90;100m"
-  printf "%b%*s" "${ESC}[38;2;126;255;178m" "$filled" "" | tr ' ' '━'
-  printf "%b%*s" "${ESC}[38;2;55;55;65m" "$empty" "" | tr ' ' '─'
+  printf "%b%*s" "${ESC}[38;2;126;255;178m" "$filled" "" | tr ' ' '#'
+  printf "%b%*s" "${ESC}[38;2;55;55;65m" "$empty" "" | tr ' ' '-'
   printf "%b]\n" "${ESC}[0m"
 
   printf "\n"
   printf "%*s" $(( (cols - spectrum_width) / 2 )) ""
   printf "%b%s%b\n" "${ESC}[38;2;99;213;255m" "$(bar_line "$tick" "$spectrum_width")" "${ESC}[0m"
   printf "\n"
-  center "q / ctrl+c - quit" "$cols"
+  center "space play/pause | n next | p prev | s stop | r refresh | q quit" "$cols"
+}
+
+draw_empty() {
+  local color="${palette[$(( tick % ${#palette[@]} ))]}"
+
+  printf "%b%b" "$HOME" "$CLEAR"
+  printf "%b" "${ESC}[${color}m"
+  center "K I T T Y   P L A Y E R" "$cols"
+  printf "%b" "${ESC}[0m"
+  printf "\n\n"
+
+  if (( has_playerctl == 0 )); then
+    center "playerctl is not installed" "$cols"
+    center "install it, then run player again" "$cols"
+    printf "\n"
+    center "Arch: sudo pacman -S playerctl" "$cols"
+    center "Debian/Ubuntu: sudo apt install playerctl" "$cols"
+    center "Fedora: sudo dnf install playerctl" "$cols"
+  else
+    center "no active MPRIS player found" "$cols"
+    center "open Spotify, mpv, VLC, Firefox, or another supported player" "$cols"
+  fi
+
+  printf "\n\n"
+  center "q - quit | r - refresh" "$cols"
+}
+
+handle_key() {
+  case "$1" in
+    q|Q) return 1 ;;
+    " ") run_playerctl play-pause ;;
+    n|N) run_playerctl next ;;
+    p|P) run_playerctl previous ;;
+    s|S) run_playerctl stop ;;
+    r|R) refresh_player ;;
+  esac
+
+  return 0
 }
 
 printf "%b%b" "$ALT_ON" "$CURSOR_OFF"
@@ -135,11 +257,17 @@ stty -echo -icanon time 0 min 0 2>/dev/null || true
 tick=0
 while true; do
   term_size
-  draw "$tick"
+  refresh_player
 
-  read -r -s -n 1 key 2>/dev/null || key=""
-  [[ "$key" == "q" || "$key" == "Q" ]] && break
+  if (( has_player == 1 )); then
+    draw "$tick"
+  else
+    draw_empty
+  fi
+
+  key=""
+  read -r -s -n 1 -t 0.1 key 2>/dev/null || true
+  handle_key "$key" || break
 
   tick=$((tick + 1))
-  sleep 0.08
 done
