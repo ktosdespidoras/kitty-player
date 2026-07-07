@@ -2,3 +2,4 @@
 bin/player text eol=lf
 README.md text eol=lf
 .gitignore text eol=lf
+env.example text eol=lf

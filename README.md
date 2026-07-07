@@ -4,6 +4,22 @@ Tiny terminal music deck for Linux/kitty. It installs a `player` command that re
 
 No Python, no build step. Requires `playerctl` on the Linux machine.
 
+## Config
+
+Local config lives here:
+
+```bash
+~/.config/kitty-player/env
+```
+
+`./install.sh` creates it from `env.example`. Put API keys there, not in git:
+
+```bash
+GENIUS_CLIENT_ID="..."
+GENIUS_CLIENT_SECRET="..."
+GENIUS_ACCESS_TOKEN="..."
+```
+
 ## Install playerctl
 
 ```bash
