@@ -152,34 +152,69 @@ blank_line() {
   printf "%b\n" "$EOL"
 }
 
-track_pulse() {
+eq_level() {
+  local tick="$1"
+  local index="$2"
+  local max="$3"
+  local wave bass sparkle level
+
+  if [[ "$status" == "Paused" ]]; then
+    printf "%s" $(( 1 + (index % 3) ))
+    return
+  fi
+
+  wave=$(( (tick * 3 + index * 5 + (index % 4) * tick) % max ))
+  bass=$(( (tick + index * index) % max ))
+  sparkle=$(( (tick * index + index * 11) % max ))
+  level=$(( (wave + bass + sparkle) / 3 + 1 ))
+
+  (( level < 1 )) && level=1
+  (( level > max )) && level="$max"
+  printf "%s" "$level"
+}
+
+eq_color() {
+  local row="$1"
+  local height="$2"
+  local hot=$(( height - row + 1 ))
+
+  if (( hot >= height - 1 )); then
+    printf "38;2;255;94;148"
+  elif (( hot >= height - 3 )); then
+    printf "38;2;255;207;94"
+  elif (( hot >= height - 5 )); then
+    printf "38;2;126;255;178"
+  else
+    printf "38;2;99;213;255"
+  fi
+}
+
+draw_equalizer() {
   local tick="$1"
   local width="$2"
+  local height="$3"
   local out=""
-  local i distance level char
-  local center_pos=$(( tick % width ))
+  local levels=()
+  local i row level color
 
   for ((i = 0; i < width; i++)); do
-    distance=$(( i - center_pos ))
-    (( distance < 0 )) && distance=$(( -distance ))
-    (( distance > width / 2 )) && distance=$(( width - distance ))
-    level=$(( (distance + tick + i * 3) % 9 ))
-
-    case "$level" in
-      0|1) char="|" ;;
-      2|3) char="/" ;;
-      4|5) char="-" ;;
-      6|7) char="\\" ;;
-      *) char="." ;;
-    esac
-
-    if [[ "$status" == "Paused" ]]; then
-      char="-"
-    fi
-    out+="$char"
+    levels[$i]="$(eq_level "$tick" "$i" "$height")"
   done
 
-  printf "%s" "$out"
+  for ((row = height; row >= 1; row--)); do
+    out=""
+    for ((i = 0; i < width; i++)); do
+      if (( levels[$i] >= row )); then
+        out+="#"
+      else
+        out+=" "
+      fi
+    done
+
+    color="$(eq_color "$row" "$height")"
+    printf "%*s" $(( (cols - width) / 2 )) ""
+    printf "%b%s%b%b\n" "${ESC}[${color}m" "$out" "${ESC}[0m" "$EOL"
+  done
 }
 
 draw() {
@@ -190,11 +225,14 @@ draw() {
   local filled=0
   local empty=$(( width - filled ))
   local spectrum_width=$(( cols > 86 ? 56 : cols - 8 ))
-  local pulse_width=$(( cols > 88 ? 60 : cols - 8 ))
+  local eq_width=$(( cols > 92 ? 64 : cols - 10 ))
+  local eq_height=8
 
   (( width < 20 )) && width=20
   (( spectrum_width < 20 )) && spectrum_width=20
-  (( pulse_width < 24 )) && pulse_width=24
+  (( eq_width < 24 )) && eq_width=24
+  (( eq_width % 2 == 1 )) && eq_width=$(( eq_width - 1 ))
+  (( rows < 24 )) && eq_height=5
 
   if (( duration_s > 0 )); then
     (( position_s > duration_s )) && position_s="$duration_s"
@@ -211,11 +249,9 @@ draw() {
   center "MPRIS terminal deck" "$cols"
   blank_line
 
-  printf "%*s" $(( (cols - pulse_width) / 2 )) ""
-  printf "%b%s%b%b\n" "${ESC}[${color}m" "$(track_pulse "$tick" "$pulse_width")" "${ESC}[0m" "$EOL"
+  draw_equalizer "$tick" "$eq_width" "$eq_height"
+  blank_line
   center "$(trim_text "$title" $((cols - 4)))" "$cols"
-  printf "%*s" $(( (cols - pulse_width) / 2 )) ""
-  printf "%b%s%b%b\n" "${ESC}[38;2;99;213;255m" "$(bar_line "$((tick + 9))" "$pulse_width")" "${ESC}[0m" "$EOL"
 
   blank_line
   center "$(trim_text "$artist - $title" $((cols - 4)))" "$cols"
