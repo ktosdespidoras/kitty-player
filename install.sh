@@ -17,6 +17,10 @@ if ! command -v playerctl >/dev/null 2>&1; then
   echo "Note: playerctl is not installed. Install it to control real media players."
 fi
 
+if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  echo "Note: install curl and jq to auto-fetch lyrics from LRCLIB."
+fi
+
 case ":$PATH:" in
   *":$HOME/.local/bin:"*)
     ;;

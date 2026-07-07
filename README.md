@@ -4,6 +4,8 @@ Tiny terminal music deck for Linux/kitty. It installs a `player` command that re
 
 No Python, no build step. Requires `playerctl` on the Linux machine.
 
+Auto lyrics use `curl`, `jq`, and LRCLIB.
+
 ## Config
 
 Local config lives here:
@@ -33,6 +35,19 @@ sudo apt install playerctl
 sudo dnf install playerctl
 ```
 
+For automatic lyrics:
+
+```bash
+# Arch
+sudo pacman -S curl jq
+
+# Debian/Ubuntu
+sudo apt install curl jq
+
+# Fedora
+sudo dnf install curl jq
+```
+
 ## Install
 
 ```bash
@@ -58,7 +73,7 @@ Keys:
 
 ## Lyrics
 
-`player` looks for lyrics in:
+`player` first looks for lyrics in:
 
 ```bash
 ~/.cache/kitty-player/lyrics/
@@ -87,6 +102,8 @@ Synced `.lrc` example:
 ```
 
 Plain `.txt` files also work, but they scroll without timing.
+
+If no local file exists and `curl`/`jq` are installed, `player` tries to fetch lyrics from LRCLIB and saves them into the same folder.
 
 ## Manual install
 
