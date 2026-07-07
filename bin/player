@@ -24,6 +24,7 @@ title=""
 album=""
 length_us=0
 position_s=0
+position_cs=0
 player_name=""
 has_playerctl=0
 has_player=0
@@ -129,12 +130,53 @@ fmt_time() {
   printf "%02d:%02d" $((total / 60)) $((total % 60))
 }
 
+seconds_to_cs() {
+  local value="${1:-0}"
+  local whole frac
+
+  value="${value/,/.}"
+  whole="${value%%.*}"
+  frac=""
+  [[ "$value" == *.* ]] && frac="${value#*.}"
+  frac="${frac}00"
+  frac="${frac:0:2}"
+
+  [[ "$whole" =~ ^[0-9]+$ ]] || whole=0
+  [[ "$frac" =~ ^[0-9]+$ ]] || frac=0
+  printf "%s" $((10#$whole * 100 + 10#$frac))
+}
+
+lrc_time_to_cs() {
+  local minutes="${1:-0}"
+  local seconds="${2:-0}"
+  local fraction="${3:-}"
+
+  fraction="${fraction#.}"
+  fraction="${fraction}00"
+  fraction="${fraction:0:2}"
+
+  [[ "$minutes" =~ ^[0-9]+$ ]] || minutes=0
+  [[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
+  [[ "$fraction" =~ ^[0-9]+$ ]] || fraction=0
+  printf "%s" $((10#$minutes * 6000 + 10#$seconds * 100 + 10#$fraction))
+}
+
 run_playerctl() {
   playerctl "$@" >/dev/null 2>&1 || true
 }
 
+refresh_position() {
+  local pos
+
+  command -v playerctl >/dev/null 2>&1 || return
+  pos="$(playerctl position 2>/dev/null || true)"
+  [[ -n "$pos" ]] || return
+  position_cs="$(seconds_to_cs "$pos")"
+  position_s=$(( position_cs / 100 ))
+}
+
 refresh_player() {
-  local meta pos raw_length
+  local meta raw_length
 
   has_playerctl=0
   has_player=0
@@ -144,6 +186,7 @@ refresh_player() {
   album=""
   length_us=0
   position_s=0
+  position_cs=0
   player_name=""
 
   command -v playerctl >/dev/null 2>&1 || return
@@ -168,9 +211,7 @@ refresh_player() {
   album="${album:-}"
   [[ "$raw_length" =~ ^[0-9]+$ ]] && length_us="$raw_length" || length_us=0
 
-  pos="$(playerctl position 2>/dev/null || true)"
-  pos="${pos%.*}"
-  [[ "$pos" =~ ^[0-9]+$ ]] && position_s="$pos" || position_s=0
+  refresh_position
 }
 
 read_lyrics_file() {
@@ -188,7 +229,7 @@ read_lyrics_file() {
       minutes="${BASH_REMATCH[1]}"
       seconds="${BASH_REMATCH[2]}"
       text="${BASH_REMATCH[4]}"
-      lyrics_times+=( $((10#$minutes * 60 + 10#$seconds)) )
+      lyrics_times+=( "$(lrc_time_to_cs "$minutes" "$seconds" "${BASH_REMATCH[3]}")" )
       lyrics_lines+=( "$text" )
       lyrics_synced=1
     elif [[ -n "$line" && ! "$line" =~ ^\[.*\]$ ]]; then
@@ -310,18 +351,23 @@ blank_line() {
 
 lyrics_index() {
   local count="${#lyrics_lines[@]}"
+  local duration_cs=$(( length_us / 10000 ))
   local i current=0
 
   (( count == 0 )) && { printf "0"; return; }
 
   if (( lyrics_synced == 1 )); then
     for ((i = 0; i < count; i++)); do
-      if (( lyrics_times[$i] <= position_s )); then
+      if (( lyrics_times[$i] <= position_cs )); then
         current="$i"
       else
         break
       fi
     done
+  elif (( duration_cs > 0 )); then
+    current=$(( position_cs * count / duration_cs ))
+    (( current >= count )) && current=$(( count - 1 ))
+    (( current < 0 )) && current=0
   else
     current=$(( (tick / 24) % count ))
   fi
@@ -377,6 +423,7 @@ draw() {
   local tick="$1"
   local color="${palette[$(( tick % ${#palette[@]} ))]}"
   local duration_s=$(( length_us / 1000000 ))
+  local duration_cs=$(( length_us / 10000 ))
   local width=$(( cols > 72 ? 44 : cols - 10 ))
   local filled=0
   local empty=$(( width - filled ))
@@ -387,9 +434,10 @@ draw() {
   (( spectrum_width < 20 )) && spectrum_width=20
   (( lyrics_width < 36 )) && lyrics_width=36
 
-  if (( duration_s > 0 )); then
-    (( position_s > duration_s )) && position_s="$duration_s"
-    filled=$(( position_s * width / duration_s ))
+  if (( duration_cs > 0 )); then
+    (( position_cs > duration_cs )) && position_cs="$duration_cs"
+    position_s=$(( position_cs / 100 ))
+    filled=$(( position_cs * width / duration_cs ))
   else
     filled=$(( tick % width ))
   fi
@@ -484,6 +532,8 @@ while true; do
   if (( force_refresh == 1 || tick % 8 == 0 )); then
     refresh_player
     force_refresh=0
+  elif (( has_player == 1 )); then
+    refresh_position
   fi
 
   if (( has_player == 1 )); then
