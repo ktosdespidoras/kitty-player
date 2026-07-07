@@ -2,6 +2,7 @@
 set -euo pipefail
 
 mkdir -p "$HOME/.local/bin"
+mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}/kitty-player/lyrics"
 cp "$(dirname "$0")/bin/player" "$HOME/.local/bin/player"
 chmod +x "$HOME/.local/bin/player"
 

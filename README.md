@@ -40,6 +40,38 @@ Keys:
 - `r` refresh
 - `q` quit
 
+## Lyrics
+
+`player` looks for lyrics in:
+
+```bash
+~/.cache/kitty-player/lyrics/
+```
+
+Supported file names:
+
+```text
+artist-title.lrc
+artist-title.txt
+title.lrc
+title.txt
+```
+
+Names are lowercase and spaces become `-`. Example:
+
+```text
+~/.cache/kitty-player/lyrics/example-artist-example-song.lrc
+```
+
+Synced `.lrc` example:
+
+```text
+[00:12.00]First custom lyric line
+[00:17.00]Second custom lyric line
+```
+
+Plain `.txt` files also work, but they scroll without timing.
+
 ## Manual install
 
 ```bash

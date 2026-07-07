@@ -31,6 +31,12 @@ old_stty=""
 last_cols=0
 last_rows=0
 force_refresh=1
+lyrics_key=""
+lyrics_found=0
+lyrics_synced=0
+lyrics_path=""
+lyrics_lines=()
+lyrics_times=()
 
 command -v stty >/dev/null 2>&1 && old_stty="$(stty -g 2>/dev/null || true)"
 
@@ -65,6 +71,14 @@ trim_text() {
   else
     printf "%s" "$text"
   fi
+}
+
+slugify() {
+  printf "%s" "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -cd '[:alnum:] ._-' \
+    | tr ' ' '-' \
+    | tr -s '-'
 }
 
 fmt_time() {
@@ -119,6 +133,52 @@ refresh_player() {
   [[ "$pos" =~ ^[0-9]+$ ]] && position_s="$pos" || position_s=0
 }
 
+load_lyrics() {
+  local key dir artist_slug title_slug candidate line text minutes seconds
+
+  key="$artist|||$title"
+  [[ "$key" == "$lyrics_key" ]] && return
+  lyrics_key="$key"
+  lyrics_found=0
+  lyrics_synced=0
+  lyrics_path=""
+  lyrics_lines=()
+  lyrics_times=()
+
+  dir="${XDG_CACHE_HOME:-$HOME/.cache}/kitty-player/lyrics"
+  artist_slug="$(slugify "$artist")"
+  title_slug="$(slugify "$title")"
+
+  for candidate in \
+    "$dir/$artist_slug-$title_slug.lrc" \
+    "$dir/$artist_slug-$title_slug.txt" \
+    "$dir/$title_slug.lrc" \
+    "$dir/$title_slug.txt"; do
+    if [[ -f "$candidate" ]]; then
+      lyrics_path="$candidate"
+      break
+    fi
+  done
+
+  [[ -n "$lyrics_path" ]] || return
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[([0-9]+):([0-9]+)(\.[0-9]+)?\](.*)$ ]]; then
+      minutes="${BASH_REMATCH[1]}"
+      seconds="${BASH_REMATCH[2]}"
+      text="${BASH_REMATCH[4]}"
+      lyrics_times+=( $((10#$minutes * 60 + 10#$seconds)) )
+      lyrics_lines+=( "$text" )
+      lyrics_synced=1
+    elif [[ -n "$line" && ! "$line" =~ ^\[.*\]$ ]]; then
+      lyrics_times+=( -1 )
+      lyrics_lines+=( "$line" )
+    fi
+  done < "$lyrics_path"
+
+  (( ${#lyrics_lines[@]} > 0 )) && lyrics_found=1
+}
+
 bar_line() {
   local tick="$1"
   local width="$2"
@@ -152,69 +212,69 @@ blank_line() {
   printf "%b\n" "$EOL"
 }
 
-eq_level() {
-  local tick="$1"
-  local index="$2"
-  local max="$3"
-  local wave bass sparkle level
+lyrics_index() {
+  local count="${#lyrics_lines[@]}"
+  local i current=0
 
-  if [[ "$status" == "Paused" ]]; then
-    printf "%s" $(( 1 + (index % 3) ))
-    return
-  fi
+  (( count == 0 )) && { printf "0"; return; }
 
-  wave=$(( (tick * 3 + index * 5 + (index % 4) * tick) % max ))
-  bass=$(( (tick + index * index) % max ))
-  sparkle=$(( (tick * index + index * 11) % max ))
-  level=$(( (wave + bass + sparkle) / 3 + 1 ))
-
-  (( level < 1 )) && level=1
-  (( level > max )) && level="$max"
-  printf "%s" "$level"
-}
-
-eq_color() {
-  local row="$1"
-  local height="$2"
-  local hot=$(( height - row + 1 ))
-
-  if (( hot >= height - 1 )); then
-    printf "38;2;255;94;148"
-  elif (( hot >= height - 3 )); then
-    printf "38;2;255;207;94"
-  elif (( hot >= height - 5 )); then
-    printf "38;2;126;255;178"
-  else
-    printf "38;2;99;213;255"
-  fi
-}
-
-draw_equalizer() {
-  local tick="$1"
-  local width="$2"
-  local height="$3"
-  local out=""
-  local levels=()
-  local i row level color
-
-  for ((i = 0; i < width; i++)); do
-    levels[$i]="$(eq_level "$tick" "$i" "$height")"
-  done
-
-  for ((row = height; row >= 1; row--)); do
-    out=""
-    for ((i = 0; i < width; i++)); do
-      if (( levels[$i] >= row )); then
-        out+="#"
+  if (( lyrics_synced == 1 )); then
+    for ((i = 0; i < count; i++)); do
+      if (( lyrics_times[$i] <= position_s )); then
+        current="$i"
       else
-        out+=" "
+        break
       fi
     done
+  else
+    current=$(( (tick / 24) % count ))
+  fi
 
-    color="$(eq_color "$row" "$height")"
-    printf "%*s" $(( (cols - width) / 2 )) ""
-    printf "%b%s%b%b\n" "${ESC}[${color}m" "$out" "${ESC}[0m" "$EOL"
-  done
+  printf "%s" "$current"
+}
+
+panel_line() {
+  local text="$1"
+  local width="$2"
+  local color="$3"
+  local content_width=$(( width - 4 ))
+  local shown
+
+  shown="$(trim_text "$text" "$content_width")"
+  printf "%*s" $(( (cols - width) / 2 )) ""
+  printf "%b| %-${content_width}s |%b%b\n" "$color" "$shown" "${ESC}[0m" "$EOL"
+}
+
+draw_lyrics_panel() {
+  local width="$1"
+  local current prev next source_label
+
+  (( width > cols - 4 )) && width=$(( cols - 4 ))
+  (( width < 36 )) && width=36
+  current="$(lyrics_index)"
+  prev=$(( current - 1 ))
+  next=$(( current + 1 ))
+
+  printf "%*s" $(( (cols - width) / 2 )) ""
+  printf "%b.%*s.%b%b\n" "${ESC}[38;2;90;90;100m" $(( width - 2 )) "" "${ESC}[0m" "$EOL" | tr ' ' '-'
+
+  if (( lyrics_found == 1 )); then
+    source_label="lyrics: ${lyrics_path##*/}"
+    panel_line "$source_label" "$width" "${ESC}[38;2;90;90;100m"
+    panel_line "" "$width" "${ESC}[38;2;90;90;100m"
+    (( prev >= 0 )) && panel_line "${lyrics_lines[$prev]}" "$width" "${ESC}[38;2;99;213;255m" || panel_line "" "$width" "${ESC}[38;2;99;213;255m"
+    panel_line "${lyrics_lines[$current]}" "$width" "${ESC}[38;2;255;207;94m"
+    (( next < ${#lyrics_lines[@]} )) && panel_line "${lyrics_lines[$next]}" "$width" "${ESC}[38;2;126;255;178m" || panel_line "" "$width" "${ESC}[38;2;126;255;178m"
+  else
+    panel_line "no lyrics file found" "$width" "${ESC}[38;2;255;207;94m"
+    panel_line "" "$width" "${ESC}[38;2;90;90;100m"
+    panel_line "put .lrc or .txt here:" "$width" "${ESC}[38;2;99;213;255m"
+    panel_line "~/.cache/kitty-player/lyrics/" "$width" "${ESC}[38;2;126;255;178m"
+    panel_line "$(slugify "$artist")-$(slugify "$title").lrc" "$width" "${ESC}[38;2;126;255;178m"
+  fi
+
+  printf "%*s" $(( (cols - width) / 2 )) ""
+  printf "%b'%*s'%b%b\n" "${ESC}[38;2;90;90;100m" $(( width - 2 )) "" "${ESC}[0m" "$EOL" | tr ' ' '-'
 }
 
 draw() {
@@ -225,14 +285,11 @@ draw() {
   local filled=0
   local empty=$(( width - filled ))
   local spectrum_width=$(( cols > 86 ? 56 : cols - 8 ))
-  local eq_width=$(( cols > 92 ? 64 : cols - 10 ))
-  local eq_height=8
+  local lyrics_width=$(( cols > 92 ? 72 : cols - 8 ))
 
   (( width < 20 )) && width=20
   (( spectrum_width < 20 )) && spectrum_width=20
-  (( eq_width < 24 )) && eq_width=24
-  (( eq_width % 2 == 1 )) && eq_width=$(( eq_width - 1 ))
-  (( rows < 24 )) && eq_height=5
+  (( lyrics_width < 36 )) && lyrics_width=36
 
   if (( duration_s > 0 )); then
     (( position_s > duration_s )) && position_s="$duration_s"
@@ -249,7 +306,8 @@ draw() {
   center "MPRIS terminal deck" "$cols"
   blank_line
 
-  draw_equalizer "$tick" "$eq_width" "$eq_height"
+  load_lyrics
+  draw_lyrics_panel "$lyrics_width"
   blank_line
   center "$(trim_text "$title" $((cols - 4)))" "$cols"
 
