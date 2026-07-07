@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -u
 
 ESC=$'\033'
 ALT_ON="${ESC}[?1049h"
@@ -640,9 +639,9 @@ draw_lyrics_panel() {
     source_label="lyrics: ${lyrics_path##*/}"
     panel_line "$source_label" "$width" "${ESC}[38;2;90;90;100m"
     panel_line "" "$width" "${ESC}[38;2;90;90;100m"
-    (( prev >= 0 )) && panel_line "${lyrics_lines[$prev]}" "$width" "${ESC}[38;2;99;213;255m" || panel_line "" "$width" "${ESC}[38;2;99;213;255m"
-    panel_line "${lyrics_lines[$current]}" "$width" "${ESC}[38;2;255;207;94m"
-    (( next < ${#lyrics_lines[@]} )) && panel_line "${lyrics_lines[$next]}" "$width" "${ESC}[38;2;126;255;178m" || panel_line "" "$width" "${ESC}[38;2;126;255;178m"
+    (( prev >= 0 )) && panel_line "${lyrics_lines[$prev]:-}" "$width" "${ESC}[38;2;99;213;255m" || panel_line "" "$width" "${ESC}[38;2;99;213;255m"
+    panel_line "${lyrics_lines[$current]:-}" "$width" "${ESC}[38;2;255;207;94m"
+    (( next < ${#lyrics_lines[@]} )) && panel_line "${lyrics_lines[$next]:-}" "$width" "${ESC}[38;2;126;255;178m" || panel_line "" "$width" "${ESC}[38;2;126;255;178m"
   else
     panel_line "${lyrics_status:-no lyrics file found}" "$width" "${ESC}[38;2;255;207;94m"
     panel_line "" "$width" "${ESC}[38;2;90;90;100m"
