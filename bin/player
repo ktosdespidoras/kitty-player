@@ -350,6 +350,22 @@ fetch_lrclib_lyrics() {
       ' 2>/dev/null || true
   )"
 
+  if [[ -z "$best" ]]; then
+    response="$(
+      curl -fsS --get "https://lrclib.net/api/get" \
+        --connect-timeout 1 \
+        --max-time 2 \
+        --data-urlencode "artist_name=$artist" \
+        --data-urlencode "track_name=$title" \
+        --data-urlencode "album_name=$album" \
+        --data-urlencode "duration=$duration_s" \
+        2>/dev/null || true
+    )"
+    if [[ -n "$response" ]]; then
+      best="$(printf "%s" "$response" | jq -c 'select((.syncedLyrics // .plainLyrics // "") != "") | . + {matchScore: 70}' 2>/dev/null || true)"
+    fi
+  fi
+
   [[ -n "$best" ]] || { lyrics_status="lyrics match too weak"; return; }
   score="$(printf "%s" "$best" | jq -r '.matchScore // 0' 2>/dev/null || printf 0)"
   synced="$(printf "%s" "$best" | jq -r '.syncedLyrics // empty' 2>/dev/null || true)"
@@ -387,7 +403,7 @@ refetch_lyrics() {
 }
 
 load_lyrics() {
-  local key dir artist_slug title_slug candidate
+  local key dir artist_slug title_slug legacy_artist_slug legacy_title_slug candidate
 
   key="$artist|||$title"
   [[ "$key" == "$lyrics_key" ]] && return
@@ -402,12 +418,18 @@ load_lyrics() {
   dir="$(current_lyrics_dir)"
   artist_slug="$(slugify "$artist")"
   title_slug="$(slugify "$title")"
+  legacy_artist_slug="$(legacy_slugify "$artist")"
+  legacy_title_slug="$(legacy_slugify "$title")"
 
   for candidate in \
     "$dir/$artist_slug-$title_slug.lrc" \
     "$dir/$artist_slug-$title_slug.txt" \
     "$dir/$title_slug.lrc" \
-    "$dir/$title_slug.txt"; do
+    "$dir/$title_slug.txt" \
+    "$dir/$legacy_artist_slug-$legacy_title_slug.lrc" \
+    "$dir/$legacy_artist_slug-$legacy_title_slug.txt" \
+    "$dir/$legacy_title_slug.lrc" \
+    "$dir/$legacy_title_slug.txt"; do
     if [[ -f "$candidate" ]]; then
       lyrics_path="$candidate"
       read_lyrics_file
