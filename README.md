@@ -64,6 +64,9 @@ player
 
 Keys:
 
+- `Tab` switch between now playing and lyrics pages
+- `1` now playing page
+- `2` lyrics page
 - `Space` play/pause
 - `n` next track
 - `p` previous track
